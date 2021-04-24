@@ -15,22 +15,28 @@
 #  with this program; if not, write to the Free Software Foundation, Inc.,
 #  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-#  Authors: Evan (MuffinMedic), Aww (AwwCookies)                          #
-#  Contributors: See CHANGELOG for specific contributions by users        #
-#  Desc: A ZNC module to track users                                      #
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  #
+#  Authors: Evan (MuffinMedic), Aww (AwwCookies) with changes by Scott (Marco_Polo)  #
+#  Contributors: See CHANGELOG for specific contributions by users                   #
+#  Desc: A ZNC module to track users                                                 #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  # # # # # # # #
  
-version = '2.0.4b'
-updated = "December 28, 2016"
+version = '2.0.5b'
+updated = "April, 2021"
  
 import znc
 import os
 import datetime
 import time
 import re
-import sqlite3
+import mysql.connector
+from mysql.connector import Error
 import requests
+
+db_host = ""
+db_db = ""
+db_user = ""
+db_pass = ""
  
 class aka(znc.Module):
     module_types = [znc.CModInfo.UserModule]
@@ -270,7 +276,7 @@ class aka(znc.Module):
         self.PutModule("{} WHO updates triggered. Please wait several minutes for ZNC to receive the updated data from the IRC server(s) and then run \x02process\x02 to add these updates to the database".format(scope))
  
     def cmd_about(self):
-        self.PutModule("\x02aka\x02 (Also Known As / nickhistory) ZNC module by MuffinMedic (Evan)")
+        self.PutModule("\x02aka\x02 (Also Known As / nickhistory) ZNC module by MuffinMedic (Evan) with changes by Marco_Polo")
         self.PutModule("\x02Description:\x02 {}".format(self.description))
         self.PutModule("\x02Version:\x02 {}".format(version))
         self.PutModule("\x02Updated:\x02 {}".format(updated))
@@ -289,45 +295,26 @@ class aka(znc.Module):
                 self.PutModule('Query successful: %s rows affected' % self.cur.rowcount)
             else:
                 self.PutModule('%s records retrieved' % count)
-        except sqlite3.Error as e:
+        except Error as e:
             self.PutModule('Error: %s' % e)
  
-    def cmd_import(self, network, file):
-        if os.path.exists(file):
-            self.old_conn = sqlite3.connect(file)
-            self.old_c = self.old_conn.cursor()
-            try:
-                self.old_c.execute("SELECT nick, identity, host, channel, message, processed_time, added FROM users")
-                old = True
-            except: 
-                self.old_c.execute("SELECT nick, ident, host, channel, message, time FROM users")
-                old = False
-            data = self.old_c.fetchall()
-            count = 0
-            self.PutModule("Importing {}. Please be patient...".format(file))
-            if old:
-                for row in data:
-                    if row[5]:
-                        self.cur.execute("INSERT OR IGNORE INTO users (network, nick, ident, host, channel, message, time) VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?));", (network, row[0], row[1], row[2], row[3], row[4], str(time.mktime((datetime.datetime.strptime(row[5].partition('.')[0], '%Y-%m-%d %H:%M:%S')).timetuple())).partition('.')[0]))
-                    elif row[6]:
-                        self.cur.execute("INSERT OR IGNORE INTO users (network, nick, ident, host, channel, message, time) VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?);", (network, row[0], row[1], row[2], row[3], row[4], str(time.mktime((datetime.datetime.strptime(row[6].partition('.')[0], '%Y-%m-%d %H:%M:%S')).timetuple())).partition('.')[0]))
-                    else:
-                        self.cur.execute("INSERT OR IGNORE INTO users (network, nick, ident, host, channel, message) VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?));", (network, row[0], row[1], row[2], row[3], row[4]))
-                    count += 1
-            else:
-                for row in data:
-                    if row[5]:
-                        self.cur.execute("INSERT OR IGNORE INTO users (network, nick, ident, host, channel, message, time) VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?));", (network, row[0], row[1], row[2], row[3], row[4], row[5]))
-                    else:
-                        self.cur.execute("INSERT OR IGNORE INTO users (network, nick, ident, host, channel, message) VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?), LOWER(?));", (network, row[0], row[1], row[2], row[3], row[4]))
-                    count += 1
-            self.conn.commit()
-            self.PutModule("Database imported. {} records processed.".format(count))
-        else:
-            self.PutModule("File {} does not exist. Skipping.".format(file))
- 
     def db_setup(self):
-        self.conn = sqlite3.connect(self.GetSavePath() + "/aka.db")
+        try:
+            self.conn = mysql.connector.connect(
+                host=db_host,
+                database=db_db,
+                user=db_user,
+                password=db_pass,
+            )
+            self.cur = self.conn.cursor()
+            self.cur.execute("create table if not exists users (id INTEGER PRIMARY KEY, network TEXT, nick TEXT, ident TEXT, host TEXT, channel TEXT, message TEXT, time INTEGER, UNIQUE(network, nick, ident, host, channel));")
+            self.conn.commit()
+        except Error as e:
+            print("Error while connecting to the AKA Database. Err: " + str(e))
+            print("Can't retreive AKA data!")
+        except:
+            print("Something went wrong with AKA ")
+
         self.cur = self.conn.cursor()
         self.cur.execute("create table if not exists users (id INTEGER PRIMARY KEY, network TEXT, nick TEXT, ident TEXT, host TEXT, channel TEXT, message TEXT, time INTEGER, UNIQUE(network, nick, ident, host, channel));")
         self.conn.commit()
@@ -453,7 +440,7 @@ class aka(znc.Module):
         help.AddRow()
         help.SetCell("Command", "geo")
         help.SetCell("Arguments", "<user> [--type=type]")
-        help.SetCell("Description", "Geolocates user (nick, ident, host, IP, or domain)")
+        help.SetCell("Description", "Geolocates user (nick, ident, host, IP, or domain) This won't work on networks who protect users hosts")
         help.AddRow()
         help.SetCell("Command", "who")
         help.SetCell("Arguments", "<scope>")
@@ -465,10 +452,7 @@ class aka(znc.Module):
         help.AddRow()
         help.SetCell("Command", "rawquery")
         help.SetCell("Arguments", "<query>")
-        help.SetCell("Description", "Run raw sqlite3 query and return results")
-        help.SetCell("Command", "import")
-        help.SetCell("Arguments", "<network> <file>")
-        help.SetCell("Description", "Import an existing database")
+        help.SetCell("Description", "Run raw mysql query and return results")
         help.AddRow()
         help.SetCell("Command", "about")
         help.SetCell("Description", "Display information about aka")
